@@ -624,7 +624,7 @@ pub struct Async<T> {
     source: Arc<Source>,
 
     /// The inner I/O handle.
-    io: Option<T>,
+    io: T,
 }
 
 impl<T> Unpin for Async<T> {}
@@ -686,7 +686,7 @@ impl<T: AsFd> Async<T> {
 
         Ok(Async {
             source: Reactor::get().insert_io(registration)?,
-            io: Some(io),
+            io,
         })
     }
 }
@@ -782,7 +782,7 @@ impl<T: AsSocket> Async<T> {
 
         Ok(Async {
             source: Reactor::get().insert_io(registration)?,
-            io: Some(io),
+            io,
         })
     }
 }
@@ -834,7 +834,7 @@ impl<T> Async<T> {
     /// # std::io::Result::Ok(()) });
     /// ```
     pub fn get_ref(&self) -> &T {
-        self.io.as_ref().unwrap()
+        &self.io
     }
 
     /// Gets a mutable reference to the inner I/O handle.
@@ -855,7 +855,7 @@ impl<T> Async<T> {
     /// # std::io::Result::Ok(()) });
     /// ```
     pub unsafe fn get_mut(&mut self) -> &mut T {
-        self.io.as_mut().unwrap()
+        &mut self.io
     }
 
     /// Unwraps the inner I/O handle.
@@ -877,8 +877,16 @@ impl<T> Async<T> {
     /// # std::io::Result::Ok(()) });
     /// ```
     pub fn into_inner(mut self) -> io::Result<T> {
-        let io = self.io.take().unwrap();
-        Reactor::get().remove_io(&self.source)?;
+        self.uninitialize()?;
+
+        // `Self` implements `Drop`, we can't simply deconstruct it.
+        let mut this = std::mem::ManuallyDrop::new(self);
+        let Self { source, io } = &mut *this;
+
+        // Take ownership of all fields because they may implement the `Drop`
+        // trait.
+        let (_source, io) = unsafe { (std::ptr::read(source), std::ptr::read(io)) };
+
         Ok(io)
     }
 
@@ -1148,6 +1156,10 @@ impl<T> Async<T> {
             optimistic(self.writable()).await?;
         }
     }
+
+    fn uninitialize(&mut self) -> io::Result<()> {
+        Reactor::get().remove_io(&self.source)
+    }
 }
 
 impl<T> AsRef<T> for Async<T> {
@@ -1158,13 +1170,8 @@ impl<T> AsRef<T> for Async<T> {
 
 impl<T> Drop for Async<T> {
     fn drop(&mut self) {
-        if self.io.is_some() {
-            // Deregister and ignore errors because destructors should not panic.
-            Reactor::get().remove_io(&self.source).ok();
-
-            // Drop the I/O handle to close it.
-            self.io.take();
-        }
+        // Deregister and ignore errors because destructors should not panic.
+        self.uninitialize().ok();
     }
 }
 
