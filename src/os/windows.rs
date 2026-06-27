@@ -70,7 +70,7 @@ impl<T: AsHandle> Waitable<T> {
         Ok(Self(Async {
             source: Reactor::get()
                 .insert_io(unsafe { Registration::new_waitable(handle.as_handle()) })?,
-            io: Some(handle),
+            io: handle,
         }))
     }
 }

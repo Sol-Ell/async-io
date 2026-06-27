@@ -58,7 +58,7 @@ impl<T: Queueable> Filter<T> {
     pub fn new(mut filter: T) -> Result<Self> {
         Ok(Self(Async {
             source: Reactor::get().insert_io(filter.registration())?,
-            io: Some(filter),
+            io: filter,
         }))
     }
 }
